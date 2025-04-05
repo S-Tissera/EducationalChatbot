@@ -1,85 +1,130 @@
 import tkinter as tk
 from tkinter import scrolledtext
-import random
+import os
 
-from education_chatbot.inference_engine import Chatbot
-from education_chatbot.knowledge_base import KnowledgeBase
-from education_chatbot.nlp_processor import NLPProcessor
-
-
-# Assuming KnowledgeBase and NLPProcessor classes are already defined as above
 
 class ChatbotUI:
-    def __init__(self, master, chatbot):
+    def __init__(self, master, chatbot, nlp_processor, ml_model=None):
         self.master = master
-        self.master.title("Chatbot UI")
-
-        # Initialize the chatbot
         self.chatbot = chatbot
+        self.nlp_processor = nlp_processor
+        self.ml_model = ml_model
+        self.awaiting_learning = False
+        self.last_question = ""
+        self.setup_ui()
 
-        # Create the UI components
-        self.chat_area = scrolledtext.ScrolledText(master, wrap=tk.WORD, width=60, height=15, font=("Arial", 12))
-        self.chat_area.grid(row=0, column=0, padx=10, pady=10)
-        self.chat_area.config(state=tk.DISABLED)
+    def setup_ui(self):
+        """Initialize the user interface components"""
+        self.master.title("Education Counseling Chatbot")
 
-        self.entry_box = tk.Entry(master, width=50, font=("Times New Roman", 12))
+        # Chat display area
+        self.chat_area = scrolledtext.ScrolledText(
+            self.master,
+            wrap=tk.WORD,
+            width=60,
+            height=15,
+            font=("Arial", 12),
+            state=tk.DISABLED
+        )
+        self.chat_area.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
+
+        # User input entry
+        self.entry_box = tk.Entry(
+            self.master,
+            width=50,
+            font=("Times New Roman", 12)
+        )
         self.entry_box.grid(row=1, column=0, padx=10, pady=10)
-
-        self.send_button = tk.Button(master, text="Send", command=self.send_message, font=("Arial", 12),
-                                     background="pink")
-        self.send_button.grid(row=1, column=1, padx=10, pady=10)
-
-        # Bind the Enter key to trigger the send_message function
         self.entry_box.bind("<Return>", self.on_enter_pressed)
 
-        # Create tag for bold text
-        self.chat_area.tag_configure("bold", font=("Arial", 12, "bold"))
+        # Send button
+        self.send_button = tk.Button(
+            self.master,
+            text="Send",
+            command=self.send_message,
+            font=("Arial", 12),
+            background="#4CAF50",  # Green color
+            foreground="white"
+        )
+        self.send_button.grid(row=1, column=1, padx=10, pady=10)
 
-    def send_message(self):
-        user_input = self.entry_box.get()
-        if user_input:
-            self.display_message(user_input, "User", "right")
-            self.entry_box.delete(0, tk.END)
-            response = self.chatbot.process_query(user_input)
-            self.display_message(response, "Bot", "left")
+        # Configure text tags
+        self.chat_area.tag_configure("user",
+                                     font=("Arial", 12, "bold"),
+                                     foreground="#333333")
+        self.chat_area.tag_configure("bot",
+                                     font=("Arial", 12),
+                                     foreground="#0066CC")
+        self.chat_area.tag_configure("right", justify=tk.RIGHT)
+        self.chat_area.tag_configure("left", justify=tk.LEFT)
+
+    def send_message(self, event=None):
+        """Handle sending of messages"""
+        user_input = self.entry_box.get().strip()
+        if not user_input:
+            return
+
+        self.display_message(user_input, "User", "right")
+        self.entry_box.delete(0, tk.END)
+
+        response = self.process_query(user_input)
+        self.display_message(response, "Bot", "left")
 
     def on_enter_pressed(self, event):
+        """Handle Enter key press"""
         self.send_message()
 
     def display_message(self, message, sender, alignment):
+        """Display a message in the chat area"""
         self.chat_area.config(state=tk.NORMAL)
 
-        if alignment == "right":
-            # Right-align the user message and bold the "User:"
-            self.chat_area.insert(tk.END, f"{sender}: ", "bold")  # Bold the sender label
-            self.chat_area.insert(tk.END, f"{message}\n\n")  # Add space after the user message
-            self.chat_area.tag_add("right", "1.0", tk.END)
-            self.chat_area.tag_configure("right", justify=tk.RIGHT)
-        elif alignment == "left":
-            # Left-align the bot message and bold the "Bot:"
-            self.chat_area.insert(tk.END, f"{sender}: ", "bold")  # Bold the sender label
-            self.chat_area.insert(tk.END, f"{message}\n\n")  # Add space after the bot message
-            self.chat_area.tag_add("left", "1.0", tk.END)
-            self.chat_area.tag_configure("left", justify=tk.LEFT)
+        # Use different tags for user and bot messages
+        tag = "user" if sender == "User" else "bot"
+        self.chat_area.insert(tk.END, f"{sender}: ", tag)
+        self.chat_area.insert(tk.END, f"{message}\n\n", tag)
+
+        # Apply alignment
+        tag_range = ("end-3l linestart", "end-2l lineend")
+        self.chat_area.tag_add(alignment, *tag_range)
 
         self.chat_area.config(state=tk.DISABLED)
         self.chat_area.yview(tk.END)
 
+    def process_query(self, user_input):
+        user_input = user_input.strip()
+        if not user_input:
+            return "Please type something..."
 
-# Sample database manager (to simulate dynamic data fetching from DB)
-class DatabaseManager:
-    def query_db(self, query):
-        # Simulating database fetch (replace with actual DB query logic)
-        return "This is a response from the database based on your query."
+        # Handle learning mode
+        if self.awaiting_learning:
+            if user_input and self.ml_model:
+                success = self.ml_model.update_model(self.last_question, user_input)
+                self.awaiting_learning = False
+                return "Thanks, I've learned from that!" if success else "I couldn't learn that response."
+            self.awaiting_learning = False
+            return "Please provide a valid response to learn."
 
+        # 1. Try ML model response
+        if self.ml_model:
+            try:
+                ml_response = self.ml_model.get_response(user_input)
+                if ml_response:
+                    return ml_response
+            except Exception as e:
+                print(f"Error getting ML response: {e}")
 
-# Initialize the components
-db_manager = DatabaseManager()
-knowledge_base = KnowledgeBase(db_manager)
-nlp_processor = NLPProcessor(db_manager)
-chatbot = Chatbot(knowledge_base, nlp_processor)
+        # 2. Try static responses
+        processed = self.nlp_processor.preprocess(user_input)
+        intent = self.nlp_processor.classify_intent(processed)
+        static_response = self.chatbot.knowledge_base.get_static_response(intent)
+        if static_response:
+            return static_response
 
-# Create the Tkinter window and start the chatbot UI
-root = tk.Tk()
-chatbot_ui = ChatbotUI(root, chatbot)
-root.mainloop()
+        # 3. Ask to teach
+        self.awaiting_learning = True
+        self.last_question = user_input
+        return "I don't know how to answer that. What should I say?"
+
+    def start_chat(self):
+        """Start the chat interface"""
+        self.master.mainloop()
